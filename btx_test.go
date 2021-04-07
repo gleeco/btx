@@ -9,14 +9,6 @@ import (
 	"cloud.google.com/go/bigtable"
 )
 
-func TestMarshalRow(t *testing.T) {
-	_, err := MarshalRow()
-	if err != nil {
-		t.Fatalf("%s error: %v", t.Name(), err)
-	}
-	t.Logf("%s todo", t.Name())
-}
-
 func TestNewRowMutation(t *testing.T) {
 	src := A{
 		TString:  "hello",

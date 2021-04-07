@@ -26,11 +26,7 @@ const (
 // our intermediary mapping of family:column to *reflect.Value
 type columnValueMap map[string][]*reflect.Value
 
-func MarshalRow() ([]byte, error) {
-	fmt.Printf("todo")
-	return nil, nil
-}
-
+// UnmarshalRow populates a destination interface according to its field tags.
 func UnmarshalRow(row bigtable.Row, dest interface{}) error {
 	if row == nil {
 		return nil
@@ -68,12 +64,12 @@ func UnmarshalRow(row bigtable.Row, dest interface{}) error {
 	return nil
 }
 
-type bigtableMutation struct {
+type BigtableMutation struct {
 	Key string
 	Mut *bigtable.Mutation
 }
 
-func NewRowMutation(i interface{}, t time.Time) (*bigtableMutation, error) {
+func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 	vx := reflect.ValueOf(i)
 	if vx.Kind() != reflect.Ptr {
 		return nil, fmt.Errorf("Invalid target interface - must be pointer")
@@ -108,7 +104,7 @@ func NewRowMutation(i interface{}, t time.Time) (*bigtableMutation, error) {
 		m.Set(cf[0], cf[1], bigtable.Time(t), b)
 	}
 
-	btm := &bigtableMutation{
+	btm := &BigtableMutation{
 		Mut: m,
 	}
 	// Set the key if already
