@@ -21,10 +21,14 @@ const (
 	RowKeyOptionName = "rowkey"
 	// The proper target value for a bigtable field is delimited as 'family:column'
 	FamilyColumnDelimiter = ":"
+	//
+	ColumnNameVariable = "$key"
+	//
+	ColumnValueVariable = "$value"
 )
 
 // our intermediary mapping of family:column to *reflect.Value
-type columnValueMap map[string][]*reflect.Value
+type columnValueMap map[string]*reflect.Value
 
 // UnmarshalRow populates a destination interface according to its field tags.
 func UnmarshalRow(row bigtable.Row, dest interface{}) error {
@@ -42,10 +46,18 @@ func UnmarshalRow(row bigtable.Row, dest interface{}) error {
 	// fmt.Printf("mapTo >> %+v\n", mapTo)
 	_, assignKey := mapTo[RowKeyOptionName]
 
-	for _, ri := range row {
+	for cf, ri := range row {
+		if mv, ok := mapTo[fmt.Sprintf("%s:$$", cf)]; ok {
+			fmt.Printf("got mapped Val: %s\n", mv)
+			if err := setMapValues(mv, ri); err != nil {
+				return fmt.Errorf("failed to set map: %v", err)
+			}
+			continue
+		}
 		for _, r := range ri {
+			// Q: how to get
 			if mv, ok := mapTo[r.Column]; ok {
-				if err := setValues(mv, r.Value); err != nil {
+				if err := setValue(mv, r.Value); err != nil {
 					return err
 				}
 			}
@@ -53,7 +65,7 @@ func UnmarshalRow(row bigtable.Row, dest interface{}) error {
 			// we just want to bother with it 1x. NB. this is here and now row.Key() to make testable.
 			if assignKey {
 				if mv, ok := mapTo[RowKeyOptionName]; ok {
-					if err := setValues(mv, []byte(r.Row)); err != nil {
+					if err := setValue(mv, []byte(r.Row)); err != nil {
 						return err
 					}
 				}
@@ -78,17 +90,10 @@ func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 	if err := mapRowStruct(vx, mapTo, ""); err != nil {
 		return nil, err
 	}
-	m := bigtable.NewMutation()
+	bmu := bigtable.NewMutation()
 
 	for k, v := range mapTo {
-		// TODO - maybe having multi-struct using the same row value is insane and bad idea.
-		if len(v) > 1 {
-			return nil, fmt.Errorf("refuse to create mutation from poly key %s", k)
-		}
-		// fmt.Printf("converting value for %s\n", k)
-
-		// if v[0].Interface() == nil {
-		if v[0].IsZero() {
+		if v.IsZero() {
 			// fmt.Printf("\tskipping empty %s\n", k)
 			continue
 		}
@@ -97,19 +102,30 @@ func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 			// fmt.Printf("ignoring map key %s", k)
 			continue
 		}
-		b, err := getBytes(v[0])
+		if cf[1] == "$$" {
+			fmt.Printf("Would handle map %s\n", k)
+			// vm := v.Elem()
+			for _, e := range v.MapKeys() {
+				col := e.Interface().(string)
+				b := v.MapIndex(e).Interface().(string)
+				bmu.Set(cf[0], string(col), bigtable.Time(t), []byte(b))
+			}
+			continue
+		}
+
+		b, err := getBytes(v)
 		if err != nil {
 			return nil, err
 		}
-		m.Set(cf[0], cf[1], bigtable.Time(t), b)
+		bmu.Set(cf[0], cf[1], bigtable.Time(t), b)
 	}
 
 	btm := &BigtableMutation{
-		Mut: m,
+		Mut: bmu,
 	}
-	// Set the key if already
+	// Finally set the row key if referenced.
 	if v, ok := mapTo[RowKeyOptionName]; ok {
-		b, err := getBytes(v[0])
+		b, err := getBytes(v)
 		if err != nil {
 			return nil, err
 		}
@@ -187,27 +203,9 @@ func getBytes(v *reflect.Value) ([]byte, error) {
 	return nil, fmt.Errorf("unsupported type: %v", v.Kind())
 }
 
-// Mutation but limited to a single family
-// func NewFamilyRowMutation() {
-
-// }
-
-// setValues assigns column value to one or more reflect.Value pointers
-// mapped to the specific family:column.
-func setValues(values []*reflect.Value, colValue []byte) error {
-	if colValue == nil {
-		return nil
-	}
-	for _, v := range values {
-		if err := setValue(v, colValue); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 var typeOfBytes = reflect.TypeOf([]byte(nil))
 
+// setValue applies serialized byte value to native value.
 func setValue(v *reflect.Value, cv []byte) error {
 	// be sane .. or is just FUD?
 	if !(v.IsValid() && v.CanSet()) {
@@ -223,6 +221,7 @@ func setValue(v *reflect.Value, cv []byte) error {
 
 	case reflect.String:
 		v.SetString(string(cv))
+
 	case reflect.Bool:
 		// cv byte boolean is a single byte 0 or 1
 		v.SetBool(cv[0] == 1)
@@ -307,15 +306,26 @@ func setValue(v *reflect.Value, cv []byte) error {
 	return nil
 }
 
-// fq: family qualifier
-func mapRowStruct(val reflect.Value, mapTo map[string][]*reflect.Value, fq string) error {
-	// TODO - this may (not) be a thing. Early hacking was plenty of confusion...
-	// if val.Kind() == reflect.Interface && !val.IsNil() {
-	// 	elm := val.Elem()
-	// 	if elm.Kind() == reflect.Ptr && !elm.IsNil() && elm.Elem().Kind() == reflect.Ptr {
-	// 		val = elm
-	// 	}
-	// }
+func setMapValues(v *reflect.Value, ri []bigtable.ReadItem) error {
+	if ri == nil {
+		return nil
+	}
+	if v.Kind() != reflect.Map {
+		return fmt.Errorf("setMapValues failed for kind %s", v.Kind().String())
+	}
+	m := reflect.MakeMap(v.Type())
+	for _, r := range ri {
+		colKey := strings.SplitAfter(r.Column, ":")[1]
+		// fmt.Printf("\t would set row! col=%s value=%s\n", r.Column, r.Value)
+		m.SetMapIndex(reflect.ValueOf(colKey), reflect.ValueOf(string(r.Value)))
+	}
+	// TODO - we are clobbering whatever might have been there. How does this suck?
+	v.Set(m)
+	return nil
+}
+
+// mapRowStruct takes a reflect.Value and maps it to the field tag name based on fq (family qualifier)
+func mapRowStruct(val reflect.Value, mapTo map[string]*reflect.Value, fq string) error {
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
 	}
@@ -341,13 +351,15 @@ func mapRowStruct(val reflect.Value, mapTo map[string][]*reflect.Value, fq strin
 				continue
 			}
 		}
-		mapTo[tagName] = append(mapTo[tagName], &valueField)
+		if _, ok := mapTo[tagName]; ok {
+			return fmt.Errorf("failed due to reused field tag '%s'", tagName)
+		}
+		mapTo[tagName] = &valueField
 	}
 	return nil
 }
 
-// Field Tag handling from fatih/structs
-
+// Field Tag handling is excerpted from fatih/structs
 type tagOptions []string
 
 func parseFieldTag(tag string) (string, tagOptions) {
