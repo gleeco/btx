@@ -76,8 +76,9 @@ func UnmarshalRow(row bigtable.Row, dest interface{}) error {
 
 // BigtableMutation is packaging for both the key and the bigtable.Mutation
 type BigtableMutation struct {
-	Key string
-	Mut *bigtable.Mutation
+	Key  string
+	Mut  *bigtable.Mutation
+	Size int
 }
 
 // NewRowMutation generates a BigtableMutation from the interface.
@@ -91,6 +92,7 @@ func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 		return nil, err
 	}
 	bmu := bigtable.NewMutation()
+	var size int
 
 	for k, v := range mapTo {
 		if v.IsZero() {
@@ -100,16 +102,19 @@ func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 		if len(cf) != 2 {
 			continue
 		}
+		// ie '$$'
 		if cf[1] == FamilyMapStringMarker {
 			for _, e := range v.MapKeys() {
 				col := e.Interface().(string)
 				b := v.MapIndex(e).Interface().(string)
+				size += len(b)
 				bmu.Set(cf[0], string(col), bigtable.Time(t), []byte(b))
 			}
 			continue
 		}
 
 		b, err := getBytes(v)
+		size += len(b)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +122,8 @@ func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 	}
 
 	btm := &BigtableMutation{
-		Mut: bmu,
+		Mut:  bmu,
+		Size: size,
 	}
 	// Finally set the row key if referenced.
 	if v, ok := mapTo[RowKeyOptionName]; ok {

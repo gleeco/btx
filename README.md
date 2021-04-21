@@ -22,8 +22,9 @@ func demoMarhsal() {
         Person: Person{FirstName: "alice"},
         ID: 1234,
     }
-    rowMu, err := NewRowMutation(&emp, time.Now())
-    // use as  table.Apply(ctx, key, rowMu)
+    bmu, err := NewRowMutation(&emp, time.Now())
+    println("size of row", bmu.Size)
+    // use as  table.Apply(ctx, key, bmu.Mut)
 }
 
 func demoUnmarshal() {

@@ -45,17 +45,22 @@ type C struct {
 
 func TestNewRowMutation(t *testing.T) {
 	src := A{
-		TString:  "hello",
-		TBool:    false,
-		TFloat32: 3.14,
-		TRowKey:  "rk",
+		TString:  "hello", // size=4
+		TBool:    false,   // size=1
+		TFloat32: 3.14,    // size=4
+		TRowKey:  "rk",    // size=0
 	}
+	size := 9
 	bmu, err := NewRowMutation(&src, time.Now())
 	if err != nil {
 		t.Fatalf("failed test with error: %v", err)
 	}
 	if bmu.Key != "rk" {
 		t.Fatalf("failed to set row key")
+	}
+	t.Logf("got size: %d", bmu.Size)
+	if bmu.Size != size {
+		t.Fatalf("Failed to get correct size. Want=%d Got=%d", size, bmu.Size)
 	}
 }
 
@@ -345,11 +350,15 @@ func TestStringMapMutation(t *testing.T) {
 			"bar": "123",
 		},
 	}
+	size := 6 // ie. the sum of bytes for each mapped value.
 	bmu, err := NewRowMutation(&c, time.Now())
 	if err != nil {
 		t.Fatalf("failed test with error: %v", err)
 	}
 	_ = bmu
+	if bmu.Size != size {
+		t.Fatalf("failed to get size; want=%d got=%d", size, bmu.Size)
+	}
 }
 
 func TestStringMapFromRow(t *testing.T) {
