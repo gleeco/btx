@@ -21,10 +21,8 @@ const (
 	RowKeyOptionName = "rowkey"
 	// The proper target value for a bigtable field is delimited as 'family:column'
 	FamilyColumnDelimiter = ":"
-	//
-	ColumnNameVariable = "$key"
-	//
-	ColumnValueVariable = "$value"
+	// FamilyMapStringMarker allows a family to be dedicated to map[string]string where key is column name.
+	FamilyMapStringMarker = "$$"
 )
 
 // our intermediary mapping of family:column to *reflect.Value
@@ -76,11 +74,13 @@ func UnmarshalRow(row bigtable.Row, dest interface{}) error {
 	return nil
 }
 
+// BigtableMutation is packaging for both the key and the bigtable.Mutation
 type BigtableMutation struct {
 	Key string
 	Mut *bigtable.Mutation
 }
 
+// NewRowMutation generates a BigtableMutation from the interface.
 func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 	vx := reflect.ValueOf(i)
 	if vx.Kind() != reflect.Ptr {
@@ -94,17 +94,13 @@ func NewRowMutation(i interface{}, t time.Time) (*BigtableMutation, error) {
 
 	for k, v := range mapTo {
 		if v.IsZero() {
-			// fmt.Printf("\tskipping empty %s\n", k)
 			continue
 		}
 		cf := strings.Split(k, FamilyColumnDelimiter)
 		if len(cf) != 2 {
-			// fmt.Printf("ignoring map key %s", k)
 			continue
 		}
-		if cf[1] == "$$" {
-			fmt.Printf("Would handle map %s\n", k)
-			// vm := v.Elem()
+		if cf[1] == FamilyMapStringMarker {
 			for _, e := range v.MapKeys() {
 				col := e.Interface().(string)
 				b := v.MapIndex(e).Interface().(string)
@@ -316,7 +312,6 @@ func setMapValues(v *reflect.Value, ri []bigtable.ReadItem) error {
 	m := reflect.MakeMap(v.Type())
 	for _, r := range ri {
 		colKey := strings.SplitAfter(r.Column, ":")[1]
-		// fmt.Printf("\t would set row! col=%s value=%s\n", r.Column, r.Value)
 		m.SetMapIndex(reflect.ValueOf(colKey), reflect.ValueOf(string(r.Value)))
 	}
 	// TODO - we are clobbering whatever might have been there. How does this suck?
