@@ -9,24 +9,9 @@ import (
 	"cloud.google.com/go/bigtable"
 )
 
-func TestNewRowMutation(t *testing.T) {
-	src := A{
-		TString:  "hello",
-		TBool:    false,
-		TFloat32: 3.14,
-		TRowKey:  "rk",
-	}
-	bmu, err := NewRowMutation(&src, time.Now())
-	if err != nil {
-		t.Fatalf("failed test with error: %v", err)
-	}
-	if bmu.Key != "rk" {
-		t.Fatalf("failed to set row key")
-	}
-}
-
+// A is a collection of types in column family 'cf1'
 type A struct {
-	TRowKey  string  `bigtable:"cf1:,rowkey"` // broken cf:col but has rowkey
+	TRowKey  string  `bigtable:",rowkey"` // broken cf:col but has rowkey
 	TBytes   []byte  `bigtable:"cf1:bytes"`
 	TString  string  `bigtable:"cf1:string"`
 	TBool    bool    `bigtable:"cf1:bool"`
@@ -43,77 +28,41 @@ type A struct {
 	TFloat32 float32 `bigtable:"cf1:float32"`
 	TFloat64 float64 `bigtable:"cf1:float64"`
 }
+
+// B is a secondary column family 'cf2' to verify multiple CF.
 type B struct {
-	TString string `bigtable:"cf1:string"`
-	TBool   bool   `bigtable:"cf1:bool"`
+	TString string `bigtable:"cf2:string"`
+	TBool   bool   `bigtable:"cf2:bool"`
 }
+
+// C is another column family 'cf3' for more exotic use/testing.
 type C struct {
-	TRowKey string `bigtable:",rowkey"`
-	Ignore1 string `bigtable:"-"`
-	Ignore2 bool   `bigtable:""`
-	Empty   *B
+	TStringMap map[string]string `bigtable:"cf3:$$"`
+	Ignore1    string            `bigtable:"-"`
+	Ignore2    bool              `bigtable:""`
+	Empty      *B
 }
 
-// Target variables for scanning into.
-// var (
-// 	scanstr    string
-// 	scanbytes  []byte
-// 	scanint    int
-// 	scanint8   int8
-// 	scanint16  int16
-// 	scanint32  int32
-// 	scanint64  int64
-// 	scanuint   uint
-// 	scanuint8  uint8
-// 	scanuint16 uint16
-// 	scanuint32 uint32
-// 	scanuint64 uint64
-// 	scanf32    float32
-// 	scanf64    float64
-// 	scanbool   bool
-// 	// scantime   time.Time
-// )
-
-// type conversionTest struct {
-// 	s, d interface{} // source and dest
-// 	// following are used if they're non-zero
-// 	wantint    int64
-// 	wantint8   int8
-// 	wantint16  int16
-// 	wantint32  int32
-// 	wantint64  int64
-// 	wantuint   uint64
-// 	wantstr    string
-// 	wantbytes  []byte
-// 	wantuint32 uint32
-// 	wantuint64 uint64
-// 	wantf32    float32
-// 	wantf64    float64
-// 	wantbool   bool // used if d is of type *bool
-// 	wanttime   time.Time
-// }
-
-// func newConversionTest() []conversionTest {
-// 	// Return a fresh instance to test so "go test -count 2" works correctly.
-// 	return []conversionTest{
-// 		// Exact conversions (destination pointer type matches source type)
-// 		{s: "foo", d: &scanstr, wantstr: "foo"},
-// 		{s: 123, d: &scanint, wantint: 123},
-// 		// {s: someTime, d: &scantime, wanttime: someTime},
-
-// 		// To strings
-// 		{s: "string", d: &scanstr, wantstr: "string"},
-// 		{s: []byte("byteslice"), d: &scanstr, wantstr: "byteslice"},
-// 		{s: 123, d: &scanstr, wantstr: "123"},
-// 		{s: int8(123), d: &scanstr, wantstr: "123"},
-// 		{s: int64(123), d: &scanstr, wantstr: "123"},
-// 		{s: uint8(123), d: &scanstr, wantstr: "123"},
-// 		{s: uint16(123), d: &scanstr, wantstr: "123"},
-// 		{s: uint32(123), d: &scanstr, wantstr: "123"},
-// 		{s: uint64(123), d: &scanstr, wantstr: "123"},
-// 		{s: 1.5, d: &scanstr, wantstr: "1.5"},
-// 	}
-// }
+func TestNewRowMutation(t *testing.T) {
+	src := A{
+		TString:  "hello", // size=4
+		TBool:    false,   // size=1
+		TFloat32: 3.14,    // size=4
+		TRowKey:  "rk",    // size=0
+	}
+	size := 9
+	bmu, err := NewRowMutation(&src, time.Now())
+	if err != nil {
+		t.Fatalf("failed test with error: %v", err)
+	}
+	if bmu.Key != "rk" {
+		t.Fatalf("failed to set row key")
+	}
+	t.Logf("got size: %d", bmu.Size)
+	if bmu.Size != size {
+		t.Fatalf("Failed to get correct size. Want=%d Got=%d", size, bmu.Size)
+	}
+}
 
 func TestUnmarshalTypes(t *testing.T) {
 	num := 42
@@ -136,10 +85,6 @@ func TestUnmarshalTypes(t *testing.T) {
 	buf = &bytes.Buffer{}
 	_ = binary.Write(buf, binary.BigEndian, int32(num))
 	tInt32 := buf.Bytes()
-
-	// buf = &bytes.Buffer{}
-	// _ = binary.Write(buf, binary.BigEndian, uint(num))
-	// tUint := buf.Bytes()
 
 	buf = &bytes.Buffer{}
 	_ = binary.Write(buf, binary.BigEndian, uint8(num))
@@ -390,10 +335,65 @@ func TestUnmarshalRow(t *testing.T) {
 	if !s.A.TBool {
 		t.Fatalf("failed to get bool true")
 	}
-	if s.B.TString != "test" {
+	if s.A.TString != "test" {
 		t.Fatalf("failed to get string")
 	}
-	if s.C.TRowKey != "key1" {
+	if s.A.TRowKey != "key1" {
 		t.Fatalf("failed to set row key")
+	}
+}
+
+func TestStringMapMutation(t *testing.T) {
+	c := C{
+		TStringMap: map[string]string{
+			"foo": "abc",
+			"bar": "123",
+		},
+	}
+	size := 6 // ie. the sum of bytes for each mapped value.
+	bmu, err := NewRowMutation(&c, time.Now())
+	if err != nil {
+		t.Fatalf("failed test with error: %v", err)
+	}
+	_ = bmu
+	if bmu.Size != size {
+		t.Fatalf("failed to get size; want=%d got=%d", size, bmu.Size)
+	}
+}
+
+func TestStringMapFromRow(t *testing.T) {
+	row := bigtable.Row{
+		"cf3": []bigtable.ReadItem{
+			{
+				Row:    "key1",
+				Column: "cf3:x",
+				Value:  []byte("X"),
+			},
+			{
+				Row:    "key1",
+				Column: "cf3:y",
+				Value:  []byte("Y"),
+			},
+			{
+				Row:    "key1",
+				Column: "cf3:z",
+				Value:  []byte("Z"),
+			},
+		},
+	}
+	type S struct {
+		A A
+		B B
+		C C
+	}
+	var s S
+	if err := UnmarshalRow(row, &s); err != nil {
+		t.Fatalf("%s error: %v", t.Name(), err)
+	}
+	for c, v := range map[string]string{"x": "X", "y": "Y", "z": "Z"} {
+		t.Logf("Map>> %+v\n", s.C.TStringMap)
+		if cv := s.C.TStringMap[c]; cv != v {
+			t.Fatalf("mapped key column c=%s failed to get v=%s; got %s", c, v, cv)
+		}
 	}
 }
